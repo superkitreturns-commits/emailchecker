@@ -1,0 +1,12 @@
+node_modules/
+data/disposable-domains.txt
+.env
+data/users.json
+data/sessions.json
+data/*.tmp
+data/secret.key
+.DS_Store
+.claude/
+data/
+node_modules/
+.env

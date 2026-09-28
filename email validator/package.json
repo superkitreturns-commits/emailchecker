@@ -1,0 +1,19 @@
+{
+  "name": "email-validator",
+  "version": "1.0.0",
+  "description": "Professional email validation tool - syntax, DNS, MX, disposable, typo and role checks",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.js",
+    "dev": "node --env-file-if-exists=.env --watch server.js",
+    "test": "node --test",
+    "add-user": "node scripts/add-user.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^5.1.0"
+  }
+}
