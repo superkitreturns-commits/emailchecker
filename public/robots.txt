@@ -1,0 +1,6 @@
+# The tool is a single page; result URLs carry a ?email= parameter that
+# should never be indexed - they contain someone's address.
+User-agent: *
+Allow: /$
+Disallow: /?email=
+Disallow: /api/
