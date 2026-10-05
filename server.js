@@ -157,8 +157,13 @@ app.use((req, _res, next) => {
 app.use('/api', (req, res, next) => {
   if (req.method === 'GET') return next();
   const origin = req.get('origin');
-  if (origin && new URL(origin).host !== req.get('host')) {
-    return res.status(403).json({ error: 'Cross-site request blocked' });
+  if (origin) {
+    let originHost;
+    try { originHost = new URL(origin).host; }
+    catch { return res.status(403).json({ error: 'Cross-site request blocked' }); }
+    if (originHost !== req.get('host')) {
+      return res.status(403).json({ error: 'Cross-site request blocked' });
+    }
   }
   next();
 });
