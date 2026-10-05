@@ -801,7 +801,11 @@ async function runLiveJob(id, emails, { attaching = false } = {}) {
     // The re-check pass sends no new rows and never moves progress past 100,
     // so without this the heading and the leftover in-flight rows would sit
     // frozen the whole time. Repaint when the phase label changes.
-    const phaseKey = live.phase ? `${live.phase.stage}:${live.phase.round}:${live.phase.pending}` : '';
+    // The countdown is part of the key, so the seconds actually tick down
+    // during a wait that sends no other change.
+    const phaseKey = live.phase
+      ? `${live.phase.stage}:${live.phase.round}:${live.phase.pending}:${waitSecondsLeft(live.phase)}`
+      : '';
     if (!fresh.length && phaseKey !== lastPhaseKey) {
       lastPhaseKey = phaseKey;
       wireBulk(live, live.filter);
@@ -899,11 +903,28 @@ function bulkRowHtml(r) {
       </div>`;
 }
 
+/**
+ * Seconds still to wait before the next re-check round, or 0 when it is
+ * actually probing. The server sends an absolute time, so a tab that was
+ * asleep shows the right figure instead of counting from when it woke.
+ */
+function waitSecondsLeft(phase) {
+  if (!phase?.waitingUntil) return 0;
+  return Math.max(0, Math.round((phase.waitingUntil - Date.now()) / 1000));
+}
+
+function fmtWait(s) {
+  return s >= 60 ? `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s` : `${s}s`;
+}
+
 /** Heading text during a live run: main-pass count, then the re-check phase. */
 function liveHeading(data) {
   if (data.phase?.stage === 'recheck') {
     const n = data.phase.pending || 0;
-    return `Rechecking ${n} deferred address${n === 1 ? '' : 'es'}…`;
+    const left = waitSecondsLeft(data.phase);
+    return left
+      ? `Waiting ${fmtWait(left)} before re-checking ${n} deferred address${n === 1 ? '' : 'es'}…`
+      : `Rechecking ${n} deferred address${n === 1 ? '' : 'es'}…`;
   }
   if (data.results.length >= data.total) return 'Finishing up…';
   return `Checking… ${data.results.length} / ${data.total}`;
@@ -1290,7 +1311,9 @@ function etaLine(job) {
   // seven silent minutes and looked stuck.
   if (job.phase?.stage === 'recheck') {
     const n = job.phase.pending;
-    return `Re-checking ${n} address${n === 1 ? '' : 'es'} the server asked us to retry · round ${job.phase.round}`;
+    const left = waitSecondsLeft(job.phase);
+    return `Re-checking ${n} address${n === 1 ? '' : 'es'} the server asked us to retry · round ${job.phase.round}`
+      + (left ? ` · next try in ${fmtWait(left)}` : '');
   }
   const elapsed = (Date.now() - job.createdAt) / 1000;
   // Under a handful of results the rate is mostly noise.
