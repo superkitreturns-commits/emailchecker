@@ -359,6 +359,11 @@ app.get('/api/admin/vast', requireOwner, authRoute(async (req, res) => {
     // activeInstanceId is the first box in the pool; this is how many are
     // actually carrying checks, which is what sets the probe rate.
     activeWorkerIds: activeWorkers().map(w => w.id),
+    // Yahoo rides a browser, not SMTP, so it spreads over a DIFFERENT and
+    // usually smaller set: only the boxes whose Chromium install actually
+    // worked. That count, not the pool size, is what sets Yahoo's rate - and
+    // Yahoo is the slowest provider, so it is usually what bounds a big run.
+    browserWorkerIds: activeWorkers().filter(w => w.chromium).map(w => w.id),
     useIpServer: useIpServer(),
     preferredHostId: preferredHostId(),
     preferredHostIds: preferredHostIds(),

@@ -27,11 +27,11 @@ const STOPPED_STATES = new Set(['stopped', 'exited']);
  * and a status refresh overwrites it with vast.ai's own 'running' - so a row
  * read from it flipped between the two and claimed idle boxes were checking.
  */
-function vastRow(inst, isActive) {
+function vastRow(inst, isActive, hasBrowser) {
   const ready = Boolean(inst.ip && inst.port);
   const stopped = STOPPED_STATES.has(inst.state);
   const label = isActive
-    ? 'Active (checking emails)'
+    ? `Active (checking emails)${hasBrowser ? ' · browser' : ' · no browser'}`
     : (STATE_LABEL[inst.state] || inst.state || 'Unknown');
   return `
     <div class="vast-row" data-id="${esc(inst.id)}">
@@ -74,14 +74,22 @@ async function renderVastView() {
   // Names every box carrying checks, not just the first: the pool is what sets
   // the probe rate, so "running on #X" alone hid the other boxes being paid for.
   const activeList = data.activeWorkerIds || [];
+  const browserList = data.browserWorkerIds || [];
+  // Yahoo spreads only over the boxes with a working browser, and it is the
+  // slowest provider, so that figure usually decides how long a big run takes.
+  // Naming it here stops a pool of three looking three times as fast as it is.
+  const browserNote = activeList.length
+    ? ` · ${browserList.length} of ${activeList.length} with a browser (Yahoo uses only these)`
+    : '';
   const activeLine = activeList.length
-    ? `Checks are running on ${activeList.length} IP Server${activeList.length > 1 ? 's' : ''}: ${activeList.map(id => `#${esc(id)}`).join(', ')}`
+    ? `Checks are running on ${activeList.length} IP Server${activeList.length > 1 ? 's' : ''}: ${activeList.map(id => `#${esc(id)}`).join(', ')}${browserNote}`
     : `Checks are running on the default OVH worker${data.ovhUrl ? '' : ' (not configured)'}`;
 
   const fmtMin = (m) => m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
 
   // The live pool: the only trustworthy answer to "is this box checking?".
   const activeIds = new Set(data.activeWorkerIds || []);
+  const browserIds = new Set(data.browserWorkerIds || []);
   // Offer Activate for a box that is NOT already in the pool, so the button
   // keeps adding boxes instead of re-activating the one already serving.
   const readyInstance = data.instances.find(i => i.ip && i.port && !STOPPED_STATES.has(i.state) && !activeIds.has(i.id))
@@ -140,7 +148,7 @@ async function renderVastView() {
       <div class="panel-card-head"><h3>Instances</h3></div>
       <div id="vastList">
         ${data.instances.length
-          ? headHtml + data.instances.map(i => vastRow(i, activeIds.has(i.id))).join('')
+          ? headHtml + data.instances.map(i => vastRow(i, activeIds.has(i.id), browserIds.has(i.id))).join('')
           : `<p class="muted pad">No instances yet. Launch one above, or attach one you already created elsewhere.</p>`}
       </div>
     </div>`;
