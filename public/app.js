@@ -804,7 +804,7 @@ async function runLiveJob(id, emails, { attaching = false } = {}) {
     // The countdown is part of the key, so the seconds actually tick down
     // during a wait that sends no other change.
     const phaseKey = live.phase
-      ? `${live.phase.stage}:${live.phase.round}:${live.phase.pending}:${waitSecondsLeft(live.phase)}`
+      ? `${live.phase.stage}:${live.phase.round}:${live.phase.pending}:${live.phase.done || 0}:${waitSecondsLeft(live.phase)}`
       : '';
     if (!fresh.length && phaseKey !== lastPhaseKey) {
       lastPhaseKey = phaseKey;
@@ -922,9 +922,9 @@ function liveHeading(data) {
   if (data.phase?.stage === 'recheck') {
     const n = data.phase.pending || 0;
     const left = waitSecondsLeft(data.phase);
-    return left
-      ? `Waiting ${fmtWait(left)} before re-checking ${n} deferred address${n === 1 ? '' : 'es'}…`
-      : `Rechecking ${n} deferred address${n === 1 ? '' : 'es'}…`;
+    if (left) return `Waiting ${fmtWait(left)} before re-checking ${n} deferred address${n === 1 ? '' : 'es'}…`;
+    const done = data.phase.done || 0;
+    return `Rechecking ${done.toLocaleString()} of ${n.toLocaleString()} deferred address${n === 1 ? '' : 'es'}…`;
   }
   if (data.results.length >= data.total) return 'Finishing up…';
   return `Checking… ${data.results.length} / ${data.total}`;
@@ -1312,8 +1312,9 @@ function etaLine(job) {
   if (job.phase?.stage === 'recheck') {
     const n = job.phase.pending;
     const left = waitSecondsLeft(job.phase);
-    return `Re-checking ${n} address${n === 1 ? '' : 'es'} the server asked us to retry · round ${job.phase.round}`
-      + (left ? ` · next try in ${fmtWait(left)}` : '');
+    if (left) return `Waiting ${fmtWait(left)} before re-checking ${n} deferred address${n === 1 ? '' : 'es'} · round ${job.phase.round}`;
+    const done = job.phase.done || 0;
+    return `Re-checking ${done.toLocaleString()} of ${n.toLocaleString()} deferred address${n === 1 ? '' : 'es'} · round ${job.phase.round}`;
   }
   const elapsed = (Date.now() - job.createdAt) / 1000;
   // Under a handful of results the rate is mostly noise.
