@@ -54,11 +54,11 @@ test('bulk reservation persists debit and recoverable work together', async t =>
   assert.equal(auth.creditsOf(auth.users.find(u => u.id === user.id)), 18);
   const restarted = new Auth({ dataDir: dir });
   await restarted.init();
-  assert.equal(restarted.bulkJobs()[0].id, job.id);
-  assert.deepEqual(restarted.bulkJobs()[0].emails, job.emails);
+  assert.equal((await restarted.bulkJobs())[0].id, job.id);
+  assert.deepEqual((await restarted.bulkJobs())[0].emails, job.emails);
   assert.equal(restarted.creditsOf(restarted.users.find(u => u.id === user.id)), 18);
   await assert.rejects(auth.reserveBulk(user, new Array(100).fill('a@test.example')));
-  assert.equal(auth.bulkJobs().length, 1);
+  assert.equal((await auth.bulkJobs()).length, 1);
 });
 
 test('resuming a bulk job preserves completed results and checks only unfinished addresses', async t => {
@@ -74,14 +74,14 @@ test('resuming a bulk job preserves completed results and checks only unfinished
   await restarted.init();
   const called = [];
   const queue = new JobQueue(async email => { called.push(email); return result(email); }, { save: j => restarted.saveBulk(j) });
-  const saved = restarted.bulkJobs()[0];
+  const saved = (await restarted.bulkJobs())[0];
   queue.create(saved.emails, saved);
   await queue.drain();
   assert.deepEqual(called, ['b@other.example']);
   assert.equal(queue.get(job.id).state, 'done');
   assert.equal(queue.get(job.id).done, 2);
   assert.deepEqual(queue.get(job.id).order, [0, 1]);
-  assert.equal(restarted.bulkJobs()[0].state, 'done');
+  assert.equal((await restarted.bulkJobs())[0].state, 'done');
   assert.equal(restarted.creditsOf(restarted.users.find(u => u.id === user.id)), 18);
 });
 
@@ -100,7 +100,7 @@ test('worker failures and validation exceptions are refunded exactly once; ordin
   await auth.saveBulk(queue.get(saved.id));
   await auth.saveBulk(queue.get(saved.id));
   assert.equal(auth.creditsOf(auth.users.find(u => u.id === user.id)), 19);
-  assert.equal(auth.bulkJobs()[0].refunded, 2);
+  assert.equal((await auth.bulkJobs())[0].refunded, 2);
 });
 
 test('concurrent reservations cannot overspend credits', async t => {

@@ -15,24 +15,34 @@ async function vapi(method, url, body) {
 }
 
 const STATE_LABEL = {
-  booting: 'Booting', loading: 'Booting', running: 'Running', active: 'Active (checking emails)',
-  attached: 'Attached', unknown: 'Unknown', exited: 'Stopped', stopped: 'Stopped'
+  booting: 'Booting', loading: 'Booting', running: 'Running', active: 'Running',
+  attached: 'Attached', unknown: 'Unknown', exited: 'Stopped', stopped: 'Stopped',
+  'port25-blocked': 'Port 25 blocked'
 };
 const STOPPED_STATES = new Set(['stopped', 'exited']);
 
+/**
+ * Whether the box is CHECKING is decided by the live pool, never by the stored
+ * state string. Two writers share that string - the pool marks it 'active',
+ * and a status refresh overwrites it with vast.ai's own 'running' - so a row
+ * read from it flipped between the two and claimed idle boxes were checking.
+ */
 function vastRow(inst, isActive) {
   const ready = Boolean(inst.ip && inst.port);
   const stopped = STOPPED_STATES.has(inst.state);
+  const label = isActive
+    ? 'Active (checking emails)'
+    : (STATE_LABEL[inst.state] || inst.state || 'Unknown');
   return `
     <div class="vast-row" data-id="${esc(inst.id)}">
       <span class="u-main"><strong>#${esc(inst.id)}</strong>${inst.gpuName ? `<span>${esc(inst.gpuName)}</span>` : ''}</span>
-      <span class="u-role-cell"><span class="u-role ${isActive ? 'r-owner' : stopped ? 'r-off' : 'r-user'}">${STATE_LABEL[inst.state] || inst.state || 'Unknown'}</span></span>
+      <span class="u-role-cell"><span class="u-role ${isActive ? 'r-owner' : stopped ? 'r-off' : 'r-user'}">${label}</span></span>
       <span class="u-num">${inst.dph != null ? `$${Number(inst.dph).toFixed(3)}/hr` : '—'}</span>
       <span class="u-date">${ready && !stopped ? `${esc(inst.ip)}:${esc(String(inst.port))}` : stopped ? 'stopped' : 'not reachable yet'}</span>
       <span class="u-actions">
         <button type="button" class="u-act" data-act="refresh" title="Refresh status">${icon('<path d="M21 12a9 9 0 11-2.64-6.36"/><path d="M21 3v6h-6"/>')}<span>Refresh</span></button>
         ${isActive
-          ? `<button type="button" class="u-act" data-act="deactivate" title="Switch checks back to the OVH worker">${icon('<path d="M18 6L6 18M6 6l12 12"/>')}<span>Deactivate</span></button>`
+          ? `<button type="button" class="u-act" data-act="deactivate" title="Stop sending checks to this box (the others keep checking)">${icon('<path d="M18 6L6 18M6 6l12 12"/>')}<span>Deactivate</span></button>`
           : `<button type="button" class="u-act u-act-credit" data-act="activate" title="Send SMTP checks to this instance" ${ready && !stopped ? '' : 'disabled'}>${icon('<path d="M20 6L9 17l-5-5"/>')}<span>Activate</span></button>`}
         ${stopped
           ? `<button type="button" class="u-act" data-act="start" title="Resume billing and boot the worker again">${icon('<path d="M5 3l14 9-14 9V3z"/>')}<span>Start</span></button>`
@@ -61,13 +71,21 @@ async function renderVastView() {
   const statusLine = data.enabled
     ? `<span class="u-role r-owner">IP Server connected</span>`
     : `<span class="u-role r-off">VAST_API_KEY not set</span>`;
-  const activeLine = data.activeInstanceId
-    ? `Checks are running on IP Server #${esc(data.activeInstanceId)}`
+  // Names every box carrying checks, not just the first: the pool is what sets
+  // the probe rate, so "running on #X" alone hid the other boxes being paid for.
+  const activeList = data.activeWorkerIds || [];
+  const activeLine = activeList.length
+    ? `Checks are running on ${activeList.length} IP Server${activeList.length > 1 ? 's' : ''}: ${activeList.map(id => `#${esc(id)}`).join(', ')}`
     : `Checks are running on the default OVH worker${data.ovhUrl ? '' : ' (not configured)'}`;
 
   const fmtMin = (m) => m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
 
-  const readyInstance = data.instances.find(i => i.ip && i.port && !STOPPED_STATES.has(i.state));
+  // The live pool: the only trustworthy answer to "is this box checking?".
+  const activeIds = new Set(data.activeWorkerIds || []);
+  // Offer Activate for a box that is NOT already in the pool, so the button
+  // keeps adding boxes instead of re-activating the one already serving.
+  const readyInstance = data.instances.find(i => i.ip && i.port && !STOPPED_STATES.has(i.state) && !activeIds.has(i.id))
+    || data.instances.find(i => i.ip && i.port && !STOPPED_STATES.has(i.state));
   // Whatever is burning money right now, so Stop is reachable without having
   // to find the row: the active instance first, else any one still running.
   const runningInstance = data.instances.find(i => i.id === data.activeInstanceId && !STOPPED_STATES.has(i.state))
@@ -122,7 +140,7 @@ async function renderVastView() {
       <div class="panel-card-head"><h3>Instances</h3></div>
       <div id="vastList">
         ${data.instances.length
-          ? headHtml + data.instances.map(i => vastRow(i, i.id === data.activeInstanceId)).join('')
+          ? headHtml + data.instances.map(i => vastRow(i, activeIds.has(i.id))).join('')
           : `<p class="muted pad">No instances yet. Launch one above, or attach one you already created elsewhere.</p>`}
       </div>
     </div>`;
@@ -144,9 +162,9 @@ async function renderVastView() {
       toast('Checks switched back to the OVH worker');
       return renderVastView();
     }
-    const target = readyInstance || data.instances.find(i => i.id === data.activeInstanceId);
+    const target = readyInstance || data.instances.find(i => activeIds.has(i.id));
     if (target) {
-      if (data.activeInstanceId !== target.id) {
+      if (!activeIds.has(target.id)) {
         try { await vapi('POST', `/api/admin/vast/${target.id}/activate`); }
         catch (err) { toast(err.message, 'warn'); }
       }
@@ -284,7 +302,8 @@ async function renderVastView() {
         if (r.removed) toast(`Instance #${id} no longer exists on vast.ai - removed`, 'warn');
       }
       if (act === 'activate') await vapi('POST', `/api/admin/vast/${id}/activate`);
-      if (act === 'deactivate') await vapi('POST', '/api/admin/vast/deactivate');
+      // Per-row: drops just this box, so the rest of the pool keeps checking.
+      if (act === 'deactivate') await vapi('POST', `/api/admin/vast/${id}/deactivate`);
       if (act === 'stop') await vapi('POST', `/api/admin/vast/${id}/stop`);
       if (act === 'start') await vapi('POST', `/api/admin/vast/${id}/start`);
       if (act === 'destroy') {

@@ -219,8 +219,13 @@ app.post('/api/worker/yahoo', async (req, res) => {
   }
   // Refuse rather than mislead: a box with no browser would return "could not
   // determine" for every address, which the app would bank as a real answer.
-  if (chromium && !chromium.ok) {
-    return res.status(503).json({ status: 'unknown', reason: chromium.detail });
+  // Until testChromium() confirms the browser (chromium === null during that
+  // first launch + canary probe), treat the box as unproven and refuse too.
+  if (!chromium?.ok) {
+    return res.status(503).json({
+      status: 'unknown',
+      reason: chromium?.detail || 'Browser check has not finished yet',
+    });
   }
   const hosts = Array.isArray(mxHosts) ? mxHosts.slice(0, 5) : [];
   try {
