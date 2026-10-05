@@ -3628,3 +3628,105 @@ body { line-height: 1.55; -webkit-font-smoothing: antialiased; }
 .p25-cell b { font-weight: 700; opacity: .85; }
 .p25-cell.is-ok { color: var(--ok, #34d399); border-color: color-mix(in srgb, var(--ok, #34d399) 38%, transparent); background: color-mix(in srgb, var(--ok, #34d399) 11%, transparent); }
 .p25-cell.is-bad { color: var(--bad, #f87171); border-color: color-mix(in srgb, var(--bad, #f87171) 42%, transparent); background: color-mix(in srgb, var(--bad, #f87171) 13%, transparent); }
+
+/* ============================================================
+   Total reports — owner-wide (or partner-scoped) volumes
+   One row per account, one column per verdict. Colour marks the
+   verdict only; the figures stay plain so the eye reads the numbers.
+   ============================================================ */
+.rep { margin-top: 18px; }
+.rep-head { align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.rep-sub { margin: 2px 0 0; font-size: 13px; }
+
+/* Headline tiles. Tabular figures so digits line up column to column. */
+.rep-totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  padding: 16px 18px 4px;
+}
+.rep-tile {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-sunk);
+  padding: 12px 14px;
+}
+.rep-tile b {
+  display: block;
+  font-size: 22px;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.01em;
+}
+.rep-tile span {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+}
+.rep-tile.is-valid   b { color: var(--ok); }
+.rep-tile.is-risky   b { color: var(--warn); }
+.rep-tile.is-invalid b { color: var(--bad); }
+.rep-tile.is-unknown b { color: var(--neutral); }
+
+.rep-wrap { overflow-x: auto; padding: 14px 18px 0; }
+.rep-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.rep-table th, .rep-table td { padding: 11px 12px; text-align: left; white-space: nowrap; }
+.rep-table thead th {
+  position: sticky; top: 0;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border-strong);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+}
+.rep-table td.rep-n, .rep-table th.rep-n { text-align: right; font-variant-numeric: tabular-nums; }
+.rep-table tbody tr { border-bottom: 1px solid var(--border); }
+.rep-table tbody tr:last-child { border-bottom: 0; }
+.rep-table tbody tr:hover { background: var(--surface-sunk); }
+
+.rep-who { display: flex; flex-direction: column; gap: 2px; }
+.rep-who b { font-weight: 650; }
+.rep-who span { font-size: 12px; color: var(--text-soft); }
+
+/* A count that is zero should recede - the eye is looking for volume. */
+.rep-zero { color: var(--text-faint); }
+.rep-v-valid   { color: var(--ok);      font-weight: 650; }
+.rep-v-risky   { color: var(--warn);    font-weight: 650; }
+.rep-v-unknown { color: var(--neutral); font-weight: 650; }
+.rep-v-invalid { color: var(--bad);     font-weight: 650; }
+.rep-total { font-weight: 700; }
+
+.rep-dl { display: inline-flex; align-items: center; gap: 6px; }
+.rep-dl svg { width: 14px; height: 14px; }
+
+.rep-tag {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--neutral-br);
+  background: var(--neutral-bg);
+  color: var(--neutral);
+  font-size: 11px;
+  font-weight: 650;
+}
+.rep-tag.is-partner { border-color: var(--accent-ring); background: var(--accent-soft); color: var(--accent); }
+.rep-tag.is-off { border-color: var(--bad-br); background: var(--bad-bg); color: var(--bad); }
+
+.rep-foot td {
+  border-top: 1px solid var(--border-strong);
+  background: var(--surface-sunk);
+  font-weight: 700;
+}
+.rep-empty { padding: 28px 18px; text-align: center; color: var(--text-soft); }
+.rep-note { padding: 10px 18px 16px; margin: 0; font-size: 12px; }
+
+@media (max-width: 720px) {
+  .rep-totals { grid-template-columns: repeat(2, 1fr); }
+  .rep-table th, .rep-table td { padding: 9px 8px; }
+}

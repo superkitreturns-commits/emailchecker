@@ -316,6 +316,11 @@
             <span class="switch-ui" aria-hidden="true"></span>
             <span><b>Can invite partners</b><em>This partner can create their own partners</em></span>
           </label>
+          <label class="switch uf-reseller" id="ufReportsWrap" hidden>
+            <input type="checkbox" id="ufReports">
+            <span class="switch-ui" aria-hidden="true"></span>
+            <span><b>Can see reports</b><em>This partner can see totals for their own clients only</em></span>
+          </label>
         </div>
         <p class="uf-msg" id="ufMsg" role="alert" hidden></p>
         <button type="submit" class="btn-primary uf-submit" id="ufSubmit">Create user</button>
@@ -349,6 +354,26 @@
       <div id="userList"></div>
     </div>
   </div>
+
+  <section class="panel-card rep" id="reportsCard" hidden>
+    <div class="panel-card-head rep-head">
+      <div>
+        <h3 id="reportsTitle">Total reports</h3>
+        <p class="muted rep-sub" id="reportsSub">Every address checked, by result.</p>
+      </div>
+      <label class="fsearch u-search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        <input type="search" id="repSearch" placeholder="Search accounts" aria-label="Search accounts">
+      </label>
+    </div>
+    <div class="rep-totals" id="repTotals"></div>
+    <div class="rep-wrap"><table class="rep-table" id="repTable"></table></div>
+    <p class="rep-note muted">
+      Totals cover every check ever run. Downloads cover recent runs only —
+      addresses are kept for a short window after a batch finishes, while the
+      counts above are permanent.
+    </p>
+  </section>
 </main>
 
 <!-- ============ GPU POOL (owner only) ============ -->

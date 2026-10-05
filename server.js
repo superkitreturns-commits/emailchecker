@@ -17,7 +17,7 @@ import { infraKey } from './lib/providers.js';
 import { msOracleEnabled } from './lib/ms-oracle.js';
 import { initTlds, tldCount, tldSource } from './lib/tlds.js';
 import { warmup as warmRdap } from './lib/domain-intel.js';
-import { Auth, AuthError, COOKIE, publicUser, readCookie, sessionCookie, clearCookie } from './lib/auth.js';
+import { Auth, AuthError, COOKIE, VERDICTS, publicUser, readCookie, sessionCookie, clearCookie } from './lib/auth.js';
 import { dataDir, initDataDir } from './lib/paths.js';
 import { vastEnabled, getInstance, setInstanceState, destroyInstance, InstanceGoneError } from './lib/vast.js';
 import {
@@ -235,6 +235,7 @@ const userView = (u, actor) => {
     id: u.id, username: u.email, name: u.name, role: auth.roleOf(u),
     disabled: !!u.disabled, createdAt: u.createdAt, credits: auth.creditsOf(u),
     canCreateResellers: auth.roleOf(u) === 'reseller' && !!u.canCreateResellers,
+    canViewReports: auth.roleOf(u) === 'reseller' && !!u.canViewReports,
     createdBy: creator ? { id: creator.id, name: creator.name, username: creator.email } : null,
     checks: u.checks || 0, logins: u.logins || 0,
     lastLoginAt: u.lastLoginAt || null, lastActiveAt: u.lastActiveAt || null,
@@ -249,17 +250,17 @@ const userView = (u, actor) => {
 app.get('/api/users', requireManager, authRoute(async (req, res) => {
   await auth.locked(() => auth.reload());
   const meNow = auth.users.find(u => u.id === req.user.id) || req.user;
-  res.json({ me: auth.roleOf(req.user), canCreateResellers: auth.canMakeResellers(meNow), users: auth.visibleTo(req.user).map(u => userView(u, req.user)) });
+  res.json({ me: auth.roleOf(req.user), canCreateResellers: auth.canMakeResellers(meNow), canGrantReports: auth.isOwner(meNow), canSeeReports: auth.canSeeReports(meNow), users: auth.visibleTo(req.user).map(u => userView(u, req.user)) });
 }));
 
 app.post('/api/users', requireManager, authRoute(async (req, res) => {
-  const { name, username, password, reseller, credits, canCreateResellers } = req.body || {};
+  const { name, username, password, reseller, credits, canCreateResellers, canViewReports } = req.body || {};
   // Permission, affordability, the account and its opening credits all commit
   // together. Splitting them let a failed transfer leave an unfunded account
   // behind after the route had already reported an error.
   const user = await auth.createManagedUser(req.user, {
     name: String(name || ''), username: String(username || ''), password,
-    reseller, credits, canCreateResellers
+    reseller, credits, canCreateResellers, canViewReports
   });
   res.status(201).json({ user: userView(user, req.user) });
 }));
@@ -277,6 +278,38 @@ app.post('/api/users/:id/credits', requireManager, authRoute(async (req, res) =>
 app.delete('/api/users/:id', requireManager, authRoute(async (req, res) => {
   await auth.deleteUser(req.user, req.params.id);
   res.json({ ok: true });
+}));
+
+// ---- Reports -------------------------------------------------------------
+// Lifetime totals per account. The owner sees everyone; a partner sees their
+// own clients, and only once the owner has granted it.
+const requireReports = (req, res, next) =>
+  auth.canSeeReports(req.user) ? next() : res.status(403).json({ error: 'You cannot view reports' });
+
+app.get('/api/reports', requireUser, requireReports, authRoute(async (req, res) => {
+  await auth.locked(() => auth.reload());
+  const rows = auth.reportRows(req.user);
+  const totals = rows.reduce((acc, r) => {
+    for (const v of VERDICTS) acc[v] = (acc[v] || 0) + r.counts[v];
+    acc.total += r.total;
+    return acc;
+  }, { total: 0 });
+  res.json({ rows, totals, verdicts: VERDICTS, scope: auth.roleOf(req.user) });
+}));
+
+// The addresses behind one square of the table. Only runs still on disk carry
+// them - an expired job survives as totals only, so the file can be shorter
+// than the count beside it.
+app.get('/api/reports/:id/download', requireUser, requireReports, authRoute(async (req, res) => {
+  const verdict = String(req.query.verdict || 'valid');
+  const list = await auth.addressesFor(req.user, req.params.id, verdict);
+  const who = auth.users.find(u => u.id === req.params.id);
+  const name = (who?.email || 'user').replace(/[^a-z0-9._-]+/gi, '-');
+  const stamp = new Date().toISOString().slice(0, 10);
+  res.setHeader('content-type', 'text/csv; charset=utf-8');
+  res.setHeader('content-disposition',
+    `attachment; filename="${name}-${verdict}-${stamp}.csv"`);
+  res.send(list.length ? list.join('\n') + '\n' : '');
 }));
 
 // ---- GPU burst capacity (owner only) ------------------------------------

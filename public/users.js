@@ -81,6 +81,8 @@ async function renderUsersView() {
     : 'Create logins for your clients. You only see the users you created.';
   $('#usersListTitle').textContent = myRole === 'owner' ? 'All users' : 'My users';
   drawUsers();
+  // Independent of the list: a partner without the grant simply has no card.
+  renderReports();
 }
 
 let seededOpen = false;
@@ -791,6 +793,11 @@ function openEdit(u, { focusPassword = false, fillPassword = false } = {}) {
           <input type="checkbox" id="eSubRes" ${u.canCreateResellers ? 'checked' : ''}>
           <span class="switch-ui" aria-hidden="true"></span>
           <span><b>Can create resellers</b><em>This reseller can make their own resellers</em></span>
+        </label>
+        <label class="switch uf-reseller" id="eRepWrap" ${u.role === 'reseller' ? '' : 'hidden'}>
+          <input type="checkbox" id="eReports" ${u.canViewReports ? 'checked' : ''}>
+          <span class="switch-ui" aria-hidden="true"></span>
+          <span><b>Can see reports</b><em>This partner can see totals for their own clients only</em></span>
         </label>` : ''}
         <label class="switch uf-reseller">
           <input type="checkbox" id="eActive" ${u.disabled ? '' : 'checked'}>
@@ -814,9 +821,11 @@ function openEdit(u, { focusPassword = false, fillPassword = false } = {}) {
   requestAnimationFrame(() => wrap.classList.add('is-open'));
   (focusPassword ? wrap.querySelector('#ePass') : wrap.querySelector('#eName')).focus();
   const eRes = wrap.querySelector('#eReseller'), eSub = wrap.querySelector('#eSubWrap');
+  const eRep = wrap.querySelector('#eRepWrap');
   if (eRes && eSub) eRes.addEventListener('change', () => {
     eSub.hidden = !eRes.checked;
     if (!eRes.checked) wrap.querySelector('#eSubRes').checked = false;
+    if (eRep) { eRep.hidden = !eRes.checked; if (!eRes.checked) wrap.querySelector('#eReports').checked = false; }
   });
 
   const close = () => {
@@ -841,6 +850,8 @@ function openEdit(u, { focusPassword = false, fillPassword = false } = {}) {
     if (rs) body.reseller = rs.checked;
     const sub = wrap.querySelector('#eSubRes');
     if (sub) body.canCreateResellers = !!(rs?.checked && sub.checked);
+    const rep = wrap.querySelector('#eReports');
+    if (rep) body.canViewReports = !!(rs?.checked && rep.checked);
     try {
       await api('PATCH', `/api/users/${u.id}`, body);
       close();
@@ -856,6 +867,9 @@ function syncSubToggle() {
   const show = myRole === 'owner' && $('#ufReseller').checked;
   $('#ufSubResWrap').hidden = !show;
   if (!show) $('#ufSubRes').checked = false;
+  // Reports are a partner-only grant, and only the owner hands them out.
+  $('#ufReportsWrap').hidden = !show;
+  if (!show) $('#ufReports').checked = false;
 }
 $('#ufReseller').addEventListener('change', syncSubToggle);
 
@@ -880,7 +894,8 @@ $('#userForm').addEventListener('submit', async (e) => {
       name: $('#ufName').value.trim(), username, password,
       credits: Number($('#ufCredits').value) || 0,
       reseller: canMakeResellers && $('#ufReseller').checked,
-      canCreateResellers: myRole === 'owner' && $('#ufReseller').checked && $('#ufSubRes').checked
+      canCreateResellers: myRole === 'owner' && $('#ufReseller').checked && $('#ufSubRes').checked,
+      canViewReports: myRole === 'owner' && $('#ufReseller').checked && $('#ufReports').checked
     });
     // Show the new login so it can be shared; the password cannot be shown again later.
     const m = $('#ufMsg');
@@ -891,7 +906,7 @@ $('#userForm').addEventListener('submit', async (e) => {
       <span class="uc-cred"><em>Username</em><code>${esc(data.user.username)}</code></span>
       <span class="uc-cred"><em>Password</em><code>${esc(password)}</code></span>
       <button type="button" class="tbtn tbtn-sm uf-copy-login" data-copy-login data-name="${esc(data.user.name && data.user.name !== data.user.username ? data.user.name : '')}" data-user="${esc(data.user.username)}" data-pass="${esc(password)}">Copy username & password</button>`;
-    $('#ufName').value = ''; $('#ufUser').value = ''; $('#ufPass').value = ''; $('#ufCredits').value = ''; $('#ufReseller').checked = false; syncSubToggle();
+    $('#ufName').value = ''; $('#ufUser').value = ''; $('#ufPass').value = ''; $('#ufCredits').value = ''; $('#ufReseller').checked = false; $('#ufReports').checked = false; syncSubToggle();
     window.refreshCredits?.();
     toast(`User @${data.user.username} created`);
     renderUsersView();
@@ -904,3 +919,104 @@ $('#userForm').addEventListener('submit', async (e) => {
 
 window.renderUsersView = renderUsersView;
 if (location.pathname.replace(/\/+$/, '') === '/users') renderUsersView();
+
+/* ============================================================
+   Total reports
+   Lifetime volumes per account, by verdict, with a per-verdict
+   export. Owner-only unless the owner grants a partner access,
+   and a partner then sees their own clients and nobody else.
+   ============================================================ */
+let reportCache = null;
+
+const VERDICT_LABEL = { valid: 'Valid', risky: 'Risky', unknown: 'Unknown', invalid: 'Invalid' };
+const num = (n) => Number(n || 0).toLocaleString();
+const DL_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M4 21h16"/></svg>';
+
+async function renderReports() {
+  const card = $('#reportsCard');
+  if (!card) return;
+  try {
+    reportCache = await api('GET', '/api/reports');
+  } catch {
+    // Not granted, or not permitted: the card simply is not there.
+    card.hidden = true;
+    return;
+  }
+  card.hidden = false;
+  $('#reportsSub').textContent = reportCache.scope === 'owner'
+    ? 'Every address checked across all accounts, by result.'
+    : 'Every address checked by your clients, by result.';
+  drawReports();
+}
+
+function drawReports() {
+  if (!reportCache) return;
+  const q = ($('#repSearch')?.value || '').trim().toLowerCase();
+  const rows = reportCache.rows.filter(r => !q
+    || (r.name || '').toLowerCase().includes(q)
+    || (r.username || '').toLowerCase().includes(q));
+
+  const t = reportCache.totals;
+  $('#repTotals').innerHTML = [
+    ['total', 'Checked', t.total],
+    ...reportCache.verdicts.map(v => [v, VERDICT_LABEL[v], t[v] || 0])
+  ].map(([k, label, n]) =>
+    `<div class="rep-tile is-${esc(k)}"><b>${num(n)}</b><span>${esc(label)}</span></div>`).join('');
+
+  const head = `<thead><tr>
+      <th>Account</th><th>Role</th>
+      ${reportCache.verdicts.map(v => `<th class="rep-n">${esc(VERDICT_LABEL[v])}</th>`).join('')}
+      <th class="rep-n">Total</th><th>Last active</th><th>Download</th>
+    </tr></thead>`;
+
+  if (!rows.length) {
+    $('#repTable').innerHTML = head +
+      `<tbody><tr><td colspan="9"><div class="rep-empty">${q ? 'No account matches that search.' : 'No checks have been run yet.'}</div></td></tr></tbody>`;
+    return;
+  }
+
+  const body = rows.map(r => {
+    const cells = reportCache.verdicts.map(v => {
+      const n = r.counts[v] || 0;
+      return `<td class="rep-n ${n ? `rep-v-${esc(v)}` : 'rep-zero'}">${num(n)}</td>`;
+    }).join('');
+    // Only valid addresses are offered: the point of the export is the list
+    // worth sending to, and a dead or unverified address is not that.
+    const dl = r.counts.valid
+      ? `<button type="button" class="tbtn tbtn-sm rep-dl" data-dl="${esc(r.id)}" title="Download this account's valid addresses">${DL_ICON}<span>Valid</span></button>`
+      : `<span class="muted">—</span>`;
+    const role = r.role === 'reseller' ? 'is-partner' : '';
+    return `<tr>
+      <td><span class="rep-who"><b>${esc(r.name || r.username)}</b><span>${esc(r.username)}</span></span></td>
+      <td><span class="rep-tag ${role}">${esc(ROLE_LABEL[r.role] || r.role)}</span>${r.disabled ? ' <span class="rep-tag is-off">Disabled</span>' : ''}</td>
+      ${cells}
+      <td class="rep-n rep-total">${num(r.total)}</td>
+      <td class="muted">${esc(ago(r.lastActiveAt))}</td>
+      <td>${dl}</td>
+    </tr>`;
+  }).join('');
+
+  // A footer that sums the ROWS ON SCREEN, so a filtered view adds up to what
+  // is actually shown rather than to the untouched grand total above.
+  const sum = (v) => rows.reduce((n, r) => n + (r.counts[v] || 0), 0);
+  const foot = `<tr class="rep-foot">
+      <td>${rows.length} account${rows.length === 1 ? '' : 's'}</td><td></td>
+      ${reportCache.verdicts.map(v => `<td class="rep-n">${num(sum(v))}</td>`).join('')}
+      <td class="rep-n">${num(rows.reduce((n, r) => n + r.total, 0))}</td>
+      <td></td><td></td>
+    </tr>`;
+
+  $('#repTable').innerHTML = `${head}<tbody>${body}${foot}</tbody>`;
+}
+
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-dl]');
+  if (!b) return;
+  // Straight to the endpoint: it sets the filename and streams the file, so
+  // the addresses never have to be held in the page.
+  window.location.href = `/api/reports/${encodeURIComponent(b.dataset.dl)}/download?verdict=valid`;
+});
+
+document.addEventListener('input', (e) => {
+  if (e.target.id === 'repSearch') drawReports();
+});
