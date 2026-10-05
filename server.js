@@ -893,6 +893,26 @@ const server = app.listen(PORT, () => {
   console.log('');
 });
 
+// ---- Last-resort error handling -----------------------------------------
+// Without these, node's default for an unhandled rejection is to kill the
+// process, and the only trace is whatever the host happened to capture - a
+// server that "just disappears" with no reason recorded. A rejection escaping
+// one request (an aborted fetch to a worker, a DNS blip mid-probe) is not a
+// reason to drop every other run in flight, so it is logged loudly and the
+// process keeps serving.
+process.on('unhandledRejection', (reason) => {
+  const err = reason instanceof Error ? reason : new Error(String(reason));
+  console.error('[unhandledRejection] server kept running:', err.stack || err.message);
+});
+
+// An uncaught exception is different: the stack that threw is gone and state
+// may be half-written, so this records WHY and leaves, letting the supervisor
+// restart a clean process. Bulk progress is on disk, so a restart resumes.
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException] exiting for a clean restart:', err?.stack || err);
+  process.exit(1);
+});
+
 // ---- Graceful shutdown --------------------------------------------------
 // systemd sends SIGTERM on restart. Without this, in-flight checks and any
 // running bulk job are killed mid-request.
