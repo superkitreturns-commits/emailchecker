@@ -663,7 +663,7 @@ const queue = new JobQueue((email) => validateEmail(email, deps), {
 // restore jobs. A restored job over the threshold cancels the idle teardown,
 // so a run that survived the restart keeps the capacity it was already using.
 await resumeAuto();
-for (const job of auth.bulkJobs()) queue.create(job.emails, job);
+for (const job of await auth.bulkJobs()) queue.create(job.emails, job);
 
 app.post('/api/validate/bulk', requireUser, rateLimit(5), async (req, res) => {
   const list = req.body?.emails;
