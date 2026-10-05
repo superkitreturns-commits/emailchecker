@@ -23,6 +23,7 @@ import { vastEnabled, getInstance, setInstanceState, destroyInstance, InstanceGo
 import {
   initVastState, listInstances, upsertInstance, removeInstance,
   setActive, clearActive, activeInstanceId, activeWorkerUrl, activeWorkerCount, activeWorkers,
+  addActiveWorker, removeActiveWorker,
   startSession, endSession, runSummary, liveStats,
   preferredHostId, preferredHostIds, setPreferredHostIds,
   useIpServer, setUseIpServer, instanceKeys
@@ -572,19 +573,40 @@ app.post('/api/admin/vast/:id/activate', requireOwner, authRoute(async (req, res
   // blocked moves every check onto a host that cannot send, and the run turns
   // into a wall of "unknown" that looks like the addresses are at fault.
   // ?force=1 is there for deliberately activating one anyway.
+  let chromium = false;
   if (req.query.force !== '1') {
-    const verdict = await workerAnswers(url);
+    const health = await workerAnswers(url);
+    const verdict = typeof health === 'string' ? health : health.verdict;
     if (verdict === 'no-port25') {
+      // Useless for SMTP and still billing, so it goes the same way an
+      // auto-rented blocked box does rather than sitting in the list costing
+      // money. ?force=1 still activates one deliberately.
       await upsertInstance({ id: req.params.id, state: 'port25-blocked', ip, port });
-      throw new AuthError(409, 'That box has outbound port 25 blocked - it cannot send mail. Destroy it and rent another, or re-send with ?force=1 to activate anyway');
+      await destroyInstance(req.params.id).catch(() => {});
+      await endSession(req.params.id);
+      await removeInstance(req.params.id);
+      await removeActiveWorker(req.params.id);
+      throw new AuthError(409, 'That box has outbound port 25 blocked - it cannot send mail, so it was destroyed to stop it billing. Rent another, or re-send with ?force=1 to activate a blocked box anyway');
     }
     if (verdict !== 'ok') {
       throw new AuthError(409, 'That box is not serving the worker yet (or its port 25 test has not finished). Wait a moment and try again');
     }
+    chromium = Boolean(health.chromium);
   }
-  await setActive(req.params.id, url);
-  await upsertInstance({ id: req.params.id, state: 'active', ip, port });
-  res.json({ activeInstanceId: req.params.id, activeUrl: url });
+  // Joins the pool rather than replacing it, so several boxes check at once -
+  // the queue reads the count live and widens its slots and provider gaps to
+  // match. Use Deactivate on a row to drop just that box.
+  await addActiveWorker(req.params.id, url, { chromium });
+  await upsertInstance({ id: req.params.id, state: 'active', ip, port, chromium });
+  res.json({ activeInstanceId: activeInstanceId(), activeUrl: url, pool: activeWorkerCount() });
+}));
+
+// Drop ONE box from the pool, leaving the rest serving. The instance keeps
+// running until it is explicitly destroyed.
+app.post('/api/admin/vast/:id/deactivate', requireOwner, authRoute(async (req, res) => {
+  await removeActiveWorker(req.params.id);
+  await upsertInstance({ id: req.params.id, state: 'running' });
+  res.json({ ok: true, pool: activeWorkerCount() });
 }));
 
 app.post('/api/admin/vast/deactivate', requireOwner, authRoute(async (req, res) => {
