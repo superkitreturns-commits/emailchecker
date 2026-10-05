@@ -17,7 +17,7 @@ async function vapi(method, url, body) {
 const STATE_LABEL = {
   booting: 'Booting', loading: 'Booting', running: 'Running', active: 'Running',
   attached: 'Attached', unknown: 'Unknown', exited: 'Stopped', stopped: 'Stopped',
-  'port25-blocked': 'Port 25 blocked'
+  'port25-blocked': 'Cannot send mail'
 };
 const STOPPED_STATES = new Set(['stopped', 'exited']);
 

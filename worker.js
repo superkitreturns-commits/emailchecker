@@ -74,48 +74,108 @@ const PORT25_TARGETS = (process.env.PORT25_TEST_HOSTS || [
   return { name: name.trim(), host: (host || name).trim() };
 }).filter(t => t.host);
 
+// The same identity the real probes use, so the qualification test measures
+// how providers treat THIS box as it will actually appear to them.
+const HELO = process.env.SMTP_HELO || 'localhost';
+const PROBE_SENDER = process.env.SMTP_MAIL_FROM || `postmaster@${HELO}`;
+
 let port25 = { ok: null, detail: 'not tested yet', at: null, targets: [] };
 
-/** One provider. Resolves to {name, host, ok, detail} - never rejects. */
+/** Matches a refusal that is about THIS IP rather than about a mailbox. */
+const BLOCKLISTED = /spamhaus|spamcop|barracudacentral|sorbs|dnsbl|rbl\b|blocklist|blacklist|blocked using|poor reputation|not allowed to send|reverse\s*dns|rdns|fcrdns|ptr\s*record/i;
+
+/**
+ * One provider, carried as far as MAIL FROM.
+ *
+ * Stopping at the greeting is what made a Spamhaus-listed box look healthy:
+ * the connection opens and the 220 arrives normally, and the refusal only
+ * comes several commands later, at MAIL FROM. A box qualified on the greeting
+ * alone joined the pool and returned "unknown" for every address at that
+ * provider - the port was open, the IP just was not welcome.
+ *
+ * Resolves to {name, host, ok, accepted, blocked, detail} - never rejects.
+ * `ok` still means outbound 25 works at all; `accepted` is the new question:
+ * will this provider take mail from this IP.
+ */
 function dialOne({ name, host }, timeout) {
   return new Promise(resolve => {
     const started = Date.now();
     const sock = createConnection({ host, port: 25 });
-    const done = (ok, detail) => {
+    let stage = 'greeting';
+    let greeting = '';
+    const done = (ok, detail, extra = {}) => {
       sock.removeAllListeners();
       sock.destroy();
-      resolve({ name, host, ok, detail, ms: Date.now() - started });
+      resolve({ name, host, ok, detail, ms: Date.now() - started, ...extra });
     };
     sock.setTimeout(timeout);
-    // Any SMTP reply code proves outbound 25 is open - that is the question
-    // being asked. A 220 means the far end also accepts us; a 421 or 5xx means
-    // egress works but this IP is throttled or blocklisted, which is a
-    // different (and still worth seeing) problem. Only silence means blocked.
-    sock.once('data', buf => {
-      const line = buf.toString().trim().split(/\r?\n/)[0].slice(0, 120);
+    sock.setEncoding('utf8');
+    sock.on('data', chunk => {
+      const line = chunk.trim().split(/\r?\n/).pop().slice(0, 200);
       const code = /^([2-5]\d\d)/.exec(line);
       if (!code) return done(false, line ? `unexpected reply: ${line}` : 'no greeting');
-      done(true, code[1] === '220' ? line : `reachable, refused this IP: ${line}`);
+
+      if (stage === 'greeting') {
+        greeting = line;
+        // A greeting that is not 220 is already a refusal of this IP.
+        if (code[1] !== '220') {
+          return done(true, `reachable, refused this IP: ${line}`,
+            { accepted: false, blocked: BLOCKLISTED.test(line) });
+        }
+        stage = 'ehlo';
+        return sock.write(`EHLO ${HELO}\r\n`);
+      }
+
+      if (stage === 'ehlo') {
+        if (code[1] !== '250') {
+          return done(true, `reachable, EHLO refused: ${line}`,
+            { accepted: false, blocked: BLOCKLISTED.test(line) });
+        }
+        stage = 'mailfrom';
+        return sock.write(`MAIL FROM:<${PROBE_SENDER}>\r\n`);
+      }
+
+      // The answer that matters: a listed IP is rejected here, not earlier.
+      sock.write('QUIT\r\n');
+      if (code[1] === '250') return done(true, greeting, { accepted: true, blocked: false });
+      return done(true, `reachable, refused this IP: ${line}`,
+        { accepted: false, blocked: BLOCKLISTED.test(line) });
     });
-    sock.once('timeout', () => done(false, `no greeting within ${timeout}ms`));
+    sock.once('timeout', () => done(false, `no reply within ${timeout}ms at ${stage}`));
     sock.once('error', err => done(false, err.code || err.message));
   });
 }
 
+// How many providers must actually accept mail from this IP for the box to be
+// worth renting. A box the big providers refuse answers "unknown" for every
+// address they own, which is most of a real list.
+const MIN_ACCEPTING = Number(process.env.PORT25_MIN_ACCEPTING || 1);
+
 async function testPort25({ timeout = 10000 } = {}) {
   const targets = await Promise.all(PORT25_TARGETS.map(t => dialOne(t, timeout)));
   const reachable = targets.filter(t => t.ok).length;
-  // Outbound 25 is open if ANY provider answered: a single refusal is that
-  // provider's opinion of this IP, not proof the port is blocked. All silent
-  // is what a blocked host looks like.
-  port25 = {
-    ok: reachable > 0,
-    detail: reachable
-      ? `${reachable}/${targets.length} providers reachable`
-      : `no provider answered on port 25 - outbound 25 is blocked on this host`,
-    at: Date.now(),
-    targets
-  };
+  const accepting = targets.filter(t => t.accepted).length;
+  const blocked = targets.filter(t => t.blocked);
+
+  // Reachability alone used to pass the box. It is not the question: a
+  // Spamhaus-listed IP greets normally at every provider and is refused at
+  // MAIL FROM, so a box that "reached 6/6" could still verify nothing. The
+  // box is usable only if somebody will actually take mail from it.
+  const usable = reachable > 0 && accepting >= MIN_ACCEPTING;
+  let detail;
+  if (!reachable) {
+    detail = 'no provider answered on port 25 - outbound 25 is blocked on this host';
+  } else if (!accepting) {
+    const names = blocked.map(t => t.name).join(', ');
+    detail = blocked.length
+      ? `reachable, but every provider refuses this IP (${names}) - it is on a blocklist, so checks would all be unknown`
+      : `reachable, but no provider accepted mail from this IP - checks would all be unknown`;
+  } else {
+    detail = `${accepting}/${targets.length} providers accept mail from this IP`
+      + (blocked.length ? ` · refused by ${blocked.map(t => t.name).join(', ')}` : '');
+  }
+
+  port25 = { ok: usable, reachable, accepting, detail, at: Date.now(), targets };
   return port25;
 }
 

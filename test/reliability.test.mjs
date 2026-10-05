@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Auth } from '../lib/auth.js';
 import { JobQueue } from '../lib/queue.js';
+import { validateEmail } from '../lib/validator.js';
 
 // The deferred re-check pass sleeps on the server's timescale (minutes). These
 // tests assert credit and progress behaviour, not retry behaviour, so they run
@@ -635,4 +636,45 @@ test('partner nesting stops at the configured depth', async (t) => {
   const client = await auth.createManagedUser(auth.users.find(u => u.id === tier2.id),
     { username: 'deepclient', password: 'password123' });
   assert.equal(client.role, 'user');
+});
+
+/**
+ * Microsoft is settled by the directory, not by SMTP.
+ *
+ * lib/providers.js marks the farm 'unreliable', so its 250 never confirms a
+ * mailbox and the directory answer outranks it. Probing anyway spends the
+ * Microsoft rate budget for nothing - and from a blocklisted IP the probe is
+ * refused at MAIL FROM, so it does not even yield a catch-all fact.
+ */
+test('a definitive Microsoft directory answer skips the SMTP probe', async () => {
+  const probed = [];
+  const deps = (status) => ({
+    verifyMailbox: async (email) => {
+      probed.push(email);
+      // What a Spamhaus-listed box actually gets back from Microsoft.
+      return { status: 'blocked', detail: '550 5.7.1 blocked using Spamhaus', retryable: false };
+    },
+    yahooMailbox: async () => null,
+    microsoftMailbox: async () => (status ? { status, reason: `directory: ${status}` } : null)
+  });
+
+  for (const [status, verdict] of [['exists', 'valid'], ['no-mailbox', 'invalid']]) {
+    probed.length = 0;
+    const r = await validateEmail(`someone@hotmail.com`, deps(status), { smtp: true });
+    assert.equal(probed.length, 0, `${status} should not reach SMTP`);
+    assert.equal(r.meta.smtpSkipped, 'microsoft-directory');
+    assert.equal(r.verdict, verdict, `${status} should read as ${verdict}`);
+  }
+
+  // The directory declining to answer is not a verdict, so SMTP still runs.
+  probed.length = 0;
+  const unsure = await validateEmail('maybe@hotmail.com', deps('unknown'), { smtp: true });
+  assert.equal(probed.length, 1, 'an unsure directory must fall back to SMTP');
+  assert.equal(unsure.meta.smtpSkipped, undefined);
+
+  // Everyone else is untouched.
+  probed.length = 0;
+  const gmail = await validateEmail('someone@gmail.com', deps(null), { smtp: true });
+  assert.equal(probed.length, 1, 'non-Microsoft must still be probed');
+  assert.equal(gmail.meta.smtpSkipped, undefined);
 });

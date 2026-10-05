@@ -593,7 +593,7 @@ app.post('/api/admin/vast/:id/activate', requireOwner, authRoute(async (req, res
       await endSession(req.params.id);
       await removeInstance(req.params.id);
       await removeActiveWorker(req.params.id);
-      throw new AuthError(409, 'That box has outbound port 25 blocked - it cannot send mail, so it was destroyed to stop it billing. Rent another, or re-send with ?force=1 to activate a blocked box anyway');
+      throw new AuthError(409, 'That box cannot send mail - either outbound port 25 is blocked or its IP is refused by the providers (a blocklisted IP answers "unknown" for every address). It was destroyed to stop it billing. Rent another, or re-send with ?force=1 to use it anyway');
     }
     if (verdict !== 'ok') {
       throw new AuthError(409, 'That box is not serving the worker yet (or its port 25 test has not finished). Wait a moment and try again');
