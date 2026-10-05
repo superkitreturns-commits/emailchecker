@@ -33,7 +33,11 @@ import { notePending, autoStatus, launchInstance, resumeAuto, armAuto, workerAns
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const PORT = process.env.PORT || 3000;
-const BULK_LIMIT = Number(process.env.BULK_LIMIT || 50000);
+// 100k measured at ~0.05 GB of results in memory, ~0.11 GB while a progress
+// snapshot is cloned, and ~2.5 MB of request body - all comfortably inside the
+// 8 MB body cap below. It is the rate limits of the mail providers, not this
+// number, that bound a run of that size.
+const BULK_LIMIT = Number(process.env.BULK_LIMIT || 100000);
 const RATE_WINDOW_MS = 60_000;
 const RATE_MAX = Number(process.env.RATE_MAX || 60);
 
@@ -76,7 +80,10 @@ app.use((_req, res, next) => {
 // A full 50k batch is ~1.5MB of JSON, and the uploader accepts 5MB files.
 // The old 2mb ceiling rejected large batches with a bare 413 before the
 // bulk limit was ever consulted.
-app.use(express.json({ limit: '8mb' }));
+// Sized against BULK_LIMIT: 100k addresses is ~2.4 MB at typical length and
+// ~5 MB at 50 characters each, so this leaves room for a list of long
+// corporate addresses instead of refusing it at the door.
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '16mb' }));
 
 // ---- Writable state --------------------------------------------------
 // On Railway/Render the deploy filesystem is thrown away on every push, so
@@ -853,7 +860,9 @@ app.use(express.static(join(__dirname, 'public'), {
 app.use((err, req, res, _next) => {
   const apiRoute = req.path.startsWith('/api');
   if (err?.type === 'entity.too.large') {
-    const msg = 'Request body is too large';
+    // Says what to do about it: the usual cause is one very large paste, and
+    // splitting it is the fix, not retrying the same body.
+    const msg = `Request body is too large. Send fewer addresses per batch (the limit is ${BULK_LIMIT.toLocaleString()}) or split the list in two`;
     return apiRoute ? res.status(413).json({ error: msg }) : res.status(413).send(msg);
   }
   if (err instanceof SyntaxError && 'body' in err) {
