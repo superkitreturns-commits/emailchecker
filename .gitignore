@@ -1,4 +1,14 @@
 node_modules/
 .DS_Store
+
+# Runtime state, never source. data/ also ships two seed lists
+# (disposable-domains.txt, tlds.txt) which ARE tracked on purpose.
+data/secret.key
+data/users.json
+data/sessions.json
+data/vast-state.json
+data/jobs/
 data/*.tmp
 data/users.json.*.tmp
+data/*.corrupt-*
+.env
